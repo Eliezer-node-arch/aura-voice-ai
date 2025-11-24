@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
 import robotAvatar from "@/assets/robot-avatar.png";
 import ParticleField from "@/components/ParticleField";
+import SoundWaveVisualization from "@/components/SoundWaveVisualization";
 
 export type RobotState = "idle" | "listening" | "thinking" | "speaking" | "processing" | "error";
 
@@ -9,9 +11,23 @@ interface RobotAvatarProps {
   isSpeaking: boolean;
   robotState: RobotState;
   audioLevel?: number;
+  frequency?: number;
 }
 
-const RobotAvatar = ({ isConnected, isSpeaking, robotState, audioLevel = 0 }: RobotAvatarProps) => {
+const RobotAvatar = ({ isConnected, isSpeaking, robotState, audioLevel = 0, frequency = 0 }: RobotAvatarProps) => {
+  const [isBlinking, setIsBlinking] = useState(false);
+
+  // Natural blinking effect
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const blinkInterval = setInterval(() => {
+      setIsBlinking(true);
+      setTimeout(() => setIsBlinking(false), 150);
+    }, Math.random() * 3000 + 2000); // Blink every 2-5 seconds
+
+    return () => clearInterval(blinkInterval);
+  }, [isConnected]);
   const getStateColor = () => {
     switch (robotState) {
       case "error":
@@ -40,6 +56,14 @@ const RobotAvatar = ({ isConnected, isSpeaking, robotState, audioLevel = 0 }: Ro
 
   return (
     <div className="relative flex items-center justify-center w-full h-full">
+      {/* 3D Sound Wave Visualization */}
+      <SoundWaveVisualization
+        audioLevel={audioLevel}
+        frequency={frequency}
+        isSpeaking={isSpeaking}
+        robotState={robotState}
+      />
+      
       {/* 3D Particle Field */}
       <ParticleField 
         isSpeaking={isSpeaking}
@@ -118,19 +142,81 @@ const RobotAvatar = ({ isConnected, isSpeaking, robotState, audioLevel = 0 }: Ro
           }}
         />
 
-        {/* Lip sync mouth overlay */}
+        {/* Enhanced Lip Sync - Mouth Movement */}
         {isSpeaking && (
-          <motion.div
-            className="absolute bottom-[30%] left-1/2 -translate-x-1/2 w-16 h-8 rounded-full bg-primary/60 blur-md"
-            animate={{
-              scaleY: lipSyncScale,
-              opacity: [0.4, 0.8, 0.4],
-            }}
-            transition={{
-              scaleY: { duration: 0.1 },
-              opacity: { duration: 0.15, repeat: Infinity },
-            }}
-          />
+          <>
+            {/* Main mouth opening */}
+            <motion.div
+              className="absolute bottom-[35%] left-1/2 -translate-x-1/2 w-12 h-6 rounded-full overflow-hidden"
+              style={{
+                background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.4) 60%, transparent 100%)',
+              }}
+              animate={{
+                scaleY: lipSyncScale,
+                scaleX: 1 + audioLevel * 0.15,
+              }}
+              transition={{
+                scaleY: { duration: 0.08, ease: "easeOut" },
+                scaleX: { duration: 0.1, ease: "easeOut" },
+              }}
+            />
+            
+            {/* Inner mouth glow */}
+            <motion.div
+              className="absolute bottom-[35%] left-1/2 -translate-x-1/2 w-10 h-4 rounded-full bg-primary/60 blur-sm"
+              animate={{
+                scaleY: lipSyncScale * 0.8,
+                opacity: [0.3 + audioLevel * 0.3, 0.6 + audioLevel * 0.4, 0.3 + audioLevel * 0.3],
+              }}
+              transition={{
+                scaleY: { duration: 0.08 },
+                opacity: { duration: 0.12, repeat: Infinity },
+              }}
+            />
+
+            {/* Speech particles from mouth */}
+            <motion.div
+              className="absolute bottom-[35%] left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-primary/80"
+              animate={{
+                y: [-5, -25],
+                x: [0, (Math.random() - 0.5) * 20],
+                opacity: [0.8, 0],
+                scale: [1, 0.5],
+              }}
+              transition={{
+                duration: 0.5,
+                repeat: Infinity,
+                repeatDelay: 0.1,
+              }}
+            />
+          </>
+        )}
+
+        {/* Eye Blinking Effect */}
+        {isConnected && (
+          <>
+            {/* Left eye blink */}
+            <motion.div
+              className="absolute top-[35%] left-[38%] w-8 h-1 bg-background/90 rounded-full"
+              initial={{ scaleY: 0, opacity: 0 }}
+              animate={{
+                scaleY: isBlinking ? 8 : 0,
+                opacity: isBlinking ? 1 : 0,
+              }}
+              transition={{ duration: 0.1 }}
+            />
+            
+            {/* Right eye blink */}
+            <motion.div
+              className="absolute top-[35%] right-[38%] w-8 h-1 bg-background/90 rounded-full"
+              initial={{ scaleY: 0, opacity: 0 }}
+              animate={{
+                scaleY: isBlinking ? 8 : 0,
+                opacity: isBlinking ? 1 : 0,
+              }}
+              transition={{ duration: 0.1 }}
+            />
+          </>
         )}
 
         {/* State overlay effects */}
