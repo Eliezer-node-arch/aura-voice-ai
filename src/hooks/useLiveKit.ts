@@ -26,6 +26,7 @@ export const useLiveKit = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [robotState, setRobotState] = useState<RobotState>("idle");
   const [audioLevel, setAudioLevel] = useState(0);
+  const [frequency, setFrequency] = useState(0);
 
   useEffect(() => {
     room.on(RoomEvent.Connected, () => {
@@ -76,15 +77,30 @@ export const useLiveKit = () => {
     };
   }, [room, volume]);
 
-  // Simulate audio level for lip sync
+  // Simulate audio level and frequency for lip sync and visualization
   useEffect(() => {
     if (isSpeaking) {
       const interval = setInterval(() => {
-        setAudioLevel(Math.random() * 0.5 + 0.5);
-      }, 100);
+        // Simulate more natural speech patterns
+        const random = Math.random();
+        if (random > 0.7) {
+          // High energy speech (vowels)
+          setAudioLevel(Math.random() * 0.3 + 0.7);
+          setFrequency(Math.random() * 2 + 1);
+        } else if (random > 0.3) {
+          // Medium energy speech
+          setAudioLevel(Math.random() * 0.3 + 0.4);
+          setFrequency(Math.random() * 1.5 + 0.5);
+        } else {
+          // Low energy speech (consonants, pauses)
+          setAudioLevel(Math.random() * 0.2);
+          setFrequency(Math.random() * 0.5);
+        }
+      }, 80);
       return () => clearInterval(interval);
     } else {
       setAudioLevel(0);
+      setFrequency(0);
     }
   }, [isSpeaking]);
 
@@ -159,5 +175,6 @@ export const useLiveKit = () => {
     messages,
     robotState,
     audioLevel,
+    frequency,
   };
 };
