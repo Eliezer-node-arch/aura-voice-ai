@@ -56,41 +56,41 @@ export const useLiveKit = () => {
       setRobotState(isPlaying ? "speaking" : "listening");
     });
 
-    // Listen for text messages on the 'lk.chat' topic (LiveKit standard for chat)
-    room.on(RoomEvent.TextReceived, (text: string, participant, info) => {
-      // Only process messages from the 'lk.chat' topic
-      if (info?.topic === 'lk.chat') {
-        const newMessage: Message = {
-          id: info.id || Date.now().toString(),
-          role: participant.identity === room.localParticipant.identity ? "user" : "assistant",
-          content: text,
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, newMessage]);
-        
-        // Update emotional state based on content
-        if (text.includes("?")) {
-          setEmotionalState("confused");
-        } else if (text.includes("!")) {
-          setEmotionalState("surprised");
-        }
-      }
-    });
-
-    // Also listen for data messages for backward compatibility and other message types
+    // Listen for data messages for state updates and text messages
     room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant, topic) => {
-      // Handle non-text data messages (e.g., state updates)
       try {
         const decoder = new TextDecoder();
-        const data = JSON.parse(decoder.decode(payload));
+        const text = decoder.decode(payload);
         
-        if (data.type === "state") {
-          setRobotState(data.state);
-        } else if (data.type === "emotion") {
-          setEmotionalState(data.emotion);
+        // Try to parse as JSON for state/emotion updates
+        try {
+          const data = JSON.parse(text);
+          if (data.type === "state") {
+            setRobotState(data.state);
+          } else if (data.type === "emotion") {
+            setEmotionalState(data.emotion);
+          } else if (data.type === "message") {
+            // Handle text messages
+            const newMessage: Message = {
+              id: Date.now().toString(),
+              role: participant?.identity === room.localParticipant.identity ? "user" : "assistant",
+              content: data.content || text,
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, newMessage]);
+          }
+        } catch {
+          // Not JSON, treat as plain text message
+          const newMessage: Message = {
+            id: Date.now().toString(),
+            role: participant?.identity === room.localParticipant.identity ? "user" : "assistant",
+            content: text,
+            timestamp: new Date(),
+          };
+          setMessages((prev) => [...prev, newMessage]);
         }
       } catch (e) {
-        // Ignore non-JSON data messages
+        console.error("Error processing data:", e);
       }
     });
 
@@ -217,13 +217,17 @@ export const useLiveKit = () => {
     setMessages((prev) => [...prev, message]);
 
     try {
-      // Send text message using LiveKit's text stream API with 'lk.chat' topic
-      // This is the standard way LiveKit handles chat messages (like in the playground)
-      await room.localParticipant.sendText(text, {
-        topic: 'lk.chat',
+      // Send as data message
+      const encoder = new TextEncoder();
+      const data = JSON.stringify({
+        type: "message",
+        content: text,
+      });
+      await room.localParticipant.publishData(encoder.encode(data), {
+        reliable: true,
       });
     } catch (error) {
-      console.error("Failed to send text message:", error);
+      console.error("Failed to send message:", error);
       // Remove the message from state if sending failed
       setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
     }
