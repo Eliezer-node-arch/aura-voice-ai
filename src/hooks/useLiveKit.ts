@@ -62,11 +62,13 @@ export const useLiveKit = () => {
     },
     [LOCAL_BACKEND, RENDER_BACKEND, fetchWithTimeout]
   );
+  
   const [room] = useState(() => new Room());
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(false);
   const [volume, setVolume] = useState(1);
   const [messages, setMessages] = useState<Message[]>([]);
   const [robotState, setRobotState] = useState<RobotState>("idle");
@@ -75,6 +77,7 @@ export const useLiveKit = () => {
   const [emotionalState, setEmotionalState] = useState<EmotionalState>("neutral");
   const [audioAnalyzer, setAudioAnalyzer] = useState<AnalyserNode | null>(null);
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [localVideoTrack, setLocalVideoTrack] = useState<any>(null);
 
   useEffect(() => {
     room.on(RoomEvent.Connected, () => {
@@ -182,6 +185,23 @@ export const useLiveKit = () => {
       if (isPlaying) {
         setIsSpeaking(true);
         setRobotState("speaking");
+      }
+    });
+
+    // Listen for local track published events
+    room.on(RoomEvent.LocalTrackPublished, (publication, participant) => {
+      console.log("Local track published:", publication.kind);
+      if (publication.kind === Track.Kind.Video) {
+        setIsVideoEnabled(true);
+        console.log("User video is now being sent to the agent");
+      }
+    });
+
+    // Listen for local track unpublished events
+    room.on(RoomEvent.LocalTrackUnpublished, (publication, participant) => {
+      console.log("Local track unpublished:", publication.kind);
+      if (publication.kind === Track.Kind.Video) {
+        setIsVideoEnabled(false);
       }
     });
 
@@ -333,7 +353,7 @@ export const useLiveKit = () => {
       setAudioLevel(0);
       setFrequency(0);
       setIsSpeaking(false);
-      }
+    }
   }, [audioAnalyzer, robotState]);
 
   const connect = useCallback(async (url?: string, token?: string) => {
@@ -364,18 +384,36 @@ export const useLiveKit = () => {
       }
       
       await room.connect(url, token);
+      
+      // Enable microphone for audio communication
       await room.localParticipant.setMicrophoneEnabled(true);
       setIsListening(true);
+      
+      // Enable camera so the agent can see the user
+      // This requests camera permission and publishes the video track
+      console.log("Requesting camera permission and enabling video...");
+      const videoTrack = await room.localParticipant.setCameraEnabled(true);
+      
+      if (videoTrack) {
+        setLocalVideoTrack(videoTrack);
+        setIsVideoEnabled(true);
+        console.log("User camera enabled - agent can now see the user");
+      } else {
+        console.warn("Failed to enable camera");
+      }
+      
     } catch (error) {
       console.error("Failed to connect:", error);
       setRobotState("error");
       throw error;
     }
-  }, [room]);
+  }, [room, fetchFromBackend]);
 
   const disconnect = useCallback(() => {
     room.disconnect();
     setMessages([]);
+    setLocalVideoTrack(null);
+    setIsVideoEnabled(false);
   }, [room]);
 
   const toggleMute = useCallback(async () => {
@@ -384,6 +422,29 @@ export const useLiveKit = () => {
     setIsMuted(newMutedState);
     setIsListening(!newMutedState);
   }, [room, isMuted]);
+
+  const toggleVideo = useCallback(async () => {
+    const newVideoState = !isVideoEnabled;
+    try {
+      if (newVideoState) {
+        console.log("Enabling user camera...");
+        const videoTrack = await room.localParticipant.setCameraEnabled(true);
+        if (videoTrack) {
+          setLocalVideoTrack(videoTrack);
+          setIsVideoEnabled(true);
+          console.log("User camera enabled - agent can now see the user");
+        }
+      } else {
+        console.log("Disabling user camera...");
+        await room.localParticipant.setCameraEnabled(false);
+        setLocalVideoTrack(null);
+        setIsVideoEnabled(false);
+        console.log("User camera disabled");
+      }
+    } catch (error) {
+      console.error("Failed to toggle video:", error);
+    }
+  }, [room, isVideoEnabled]);
 
   const changeVolume = useCallback((newVolume: number) => {
     setVolume(newVolume);
@@ -432,17 +493,20 @@ export const useLiveKit = () => {
     connect,
     disconnect,
     toggleMute,
+    toggleVideo,
     changeVolume,
     sendMessage,
     isConnected,
     isSpeaking,
     isListening,
     isMuted,
+    isVideoEnabled,
     volume,
     messages,
     robotState,
     audioLevel,
     frequency,
     emotionalState,
+    localVideoTrack,
   };
 };
