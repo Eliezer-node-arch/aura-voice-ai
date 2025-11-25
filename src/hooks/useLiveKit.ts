@@ -45,34 +45,92 @@ export const useLiveKit = () => {
     });
 
     room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-      if (track.kind === Track.Kind.Audio) {
+      // Only analyze remote participant audio (the agent's audio), not local participant
+      if (track.kind === Track.Kind.Audio && participant && participant !== room.localParticipant) {
+        console.log("Setting up audio analysis for agent:", participant.identity);
+        
         const audioElement = track.attach();
         audioElement.volume = volume;
         document.body.appendChild(audioElement);
+        
+        // Wait for audio element to be ready
+        audioElement.addEventListener('canplay', () => {
+          console.log("Audio element ready, setting up analyzer");
+          
+          // Set up audio analysis for lip sync with real-time audio output
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          
+          // Resume audio context if suspended (browser autoplay policy)
+          if (ctx.state === 'suspended') {
+            ctx.resume().then(() => {
+              console.log("Audio context resumed");
+            });
+          }
+          
+          const analyzer = ctx.createAnalyser();
+          analyzer.fftSize = 256; // Lower for faster updates
+          analyzer.smoothingTimeConstant = 0.1; // Very responsive
+          analyzer.minDecibels = -90;
+          analyzer.maxDecibels = -10;
+          
+          // Create a media element source from the audio element
+          // This allows us to analyze the audio while it plays
+          const source = ctx.createMediaElementSource(audioElement);
+          source.connect(analyzer);
+          
+          // Connect analyzer to destination to maintain audio playback
+          analyzer.connect(ctx.destination);
+          
+          setAudioContext(ctx);
+          setAudioAnalyzer(analyzer);
+          
+          console.log("Audio analyzer set up successfully");
+        }, { once: true });
+        
+        // Also set up immediately in case canplay already fired
+        if (audioElement.readyState >= 2) {
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          if (ctx.state === 'suspended') {
+            ctx.resume();
+          }
+          const analyzer = ctx.createAnalyser();
+          analyzer.fftSize = 256;
+          analyzer.smoothingTimeConstant = 0.1;
+          analyzer.minDecibels = -90;
+          analyzer.maxDecibels = -10;
+          const source = ctx.createMediaElementSource(audioElement);
+          source.connect(analyzer);
+          analyzer.connect(ctx.destination);
+          setAudioContext(ctx);
+          setAudioAnalyzer(analyzer);
+          console.log("Audio analyzer set up immediately");
+        }
+      }
+    });
 
-        // Set up audio analysis for lip sync with real-time audio output
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const analyzer = ctx.createAnalyser();
-        analyzer.fftSize = 512; // Higher resolution for better analysis
-        analyzer.smoothingTimeConstant = 0.3; // Smoother transitions
+    // Listen for when remote participants start/stop speaking
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind === Track.Kind.Audio && participant && participant !== room.localParticipant) {
+        // Monitor when the agent's audio track becomes active
+        track.on("muted", () => {
+          setIsSpeaking(false);
+          setRobotState("listening");
+        });
         
-        // Create a media element source from the audio element
-        // This allows us to analyze the audio while it plays
-        const source = ctx.createMediaElementSource(audioElement);
-        source.connect(analyzer);
-        
-        // Connect analyzer to destination to maintain audio playback
-        analyzer.connect(ctx.destination);
-        
-        setAudioContext(ctx);
-        setAudioAnalyzer(analyzer);
+        track.on("unmuted", () => {
+          setIsSpeaking(true);
+          setRobotState("speaking");
+        });
       }
     });
 
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
       const isPlaying = room.canPlaybackAudio;
-      setIsSpeaking(isPlaying);
-      setRobotState(isPlaying ? "speaking" : "listening");
+      // Only update if we're actually playing audio
+      if (isPlaying) {
+        setIsSpeaking(true);
+        setRobotState("speaking");
+      }
     });
 
     // Listen for text messages on the 'lk.chat' topic (LiveKit standard for chat)
@@ -129,15 +187,16 @@ export const useLiveKit = () => {
 
   // Real-time audio analysis for lip sync - updates at 60fps for smooth animation
   useEffect(() => {
-    if (isSpeaking && audioAnalyzer) {
+    if (audioAnalyzer) {
       const bufferLength = audioAnalyzer.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
       const timeDataArray = new Uint8Array(bufferLength);
       
       let animationFrameId: number;
+      let lastAudioLevel = 0;
       
       const analyzeAudio = () => {
-        if (!isSpeaking || !audioAnalyzer) {
+        if (!audioAnalyzer) {
           return;
         }
         
@@ -148,12 +207,15 @@ export const useLiveKit = () => {
         
         // Calculate RMS (Root Mean Square) from time domain for more accurate audio level
         let sumSquares = 0;
+        let maxAmplitude = 0;
         for (let i = 0; i < timeDataArray.length; i++) {
-          const normalized = (timeDataArray[i] - 128) / 128;
+          const normalized = Math.abs((timeDataArray[i] - 128) / 128);
           sumSquares += normalized * normalized;
+          maxAmplitude = Math.max(maxAmplitude, normalized);
         }
         const rms = Math.sqrt(sumSquares / timeDataArray.length);
-        const normalizedLevel = Math.min(rms * 2, 1); // Scale and clamp to 0-1
+        // Use both RMS and peak amplitude for better detection
+        const normalizedLevel = Math.min((rms * 0.7 + maxAmplitude * 0.3) * 5, 1); // Scale more aggressively for visibility
         
         // Calculate average frequency amplitude for additional smoothing
         let freqSum = 0;
@@ -163,8 +225,35 @@ export const useLiveKit = () => {
         const freqAverage = freqSum / dataArray.length;
         const freqLevel = Math.min(freqAverage / 128, 1);
         
-        // Combine both for more accurate audio level
-        const combinedLevel = (normalizedLevel * 0.7 + freqLevel * 0.3);
+        // Combine both for more accurate audio level (weight time domain more)
+        const combinedLevel = (normalizedLevel * 0.8 + freqLevel * 0.2);
+        
+        // Smooth the transition (more responsive)
+        const smoothedLevel = combinedLevel * 0.8 + lastAudioLevel * 0.2;
+        lastAudioLevel = smoothedLevel;
+        
+        // Always update audio level (even if low) for smooth animation
+        // Ensure minimum value when speaking to keep mouth visible
+        const finalLevel = smoothedLevel > 0.01 ? Math.max(smoothedLevel, 0.1) : smoothedLevel;
+        setAudioLevel(finalLevel);
+        
+        // Debug logging (remove in production)
+        if (finalLevel > 0.1) {
+          console.log("Audio level:", finalLevel.toFixed(3), "isSpeaking:", finalLevel > 0.05);
+        }
+        
+        // Update isSpeaking based on actual audio activity (threshold to avoid noise)
+        const hasAudioActivity = finalLevel > 0.05;
+        if (hasAudioActivity) {
+          setIsSpeaking(true);
+          setRobotState("speaking");
+        } else if (finalLevel < 0.02) {
+          // Only set to listening if audio is very low
+          setIsSpeaking(false);
+          if (robotState !== "thinking" && robotState !== "idle") {
+            setRobotState("listening");
+          }
+        }
         
         // Calculate dominant frequency for visualization
         let maxValue = 0;
@@ -176,15 +265,12 @@ export const useLiveKit = () => {
           }
         }
         const normalizedFreq = maxIndex / bufferLength;
-        
-        // Update state with smooth values
-        setAudioLevel(combinedLevel);
         setFrequency(normalizedFreq * 3); // Scale for visualization
         
         // Update emotional state based on audio characteristics
-        if (combinedLevel > 0.7) {
+        if (smoothedLevel > 0.7) {
           setEmotionalState("happy");
-        } else if (combinedLevel > 0.4) {
+        } else if (smoothedLevel > 0.4) {
           setEmotionalState("neutral");
         }
         
@@ -200,16 +286,13 @@ export const useLiveKit = () => {
           cancelAnimationFrame(animationFrameId);
         }
       };
-    } else if (!isSpeaking) {
+    } else {
+      // No audio analyzer, reset states
       setAudioLevel(0);
       setFrequency(0);
-      if (robotState === "thinking") {
-        setEmotionalState("thinking");
-      } else if (robotState === "idle") {
-        setEmotionalState("neutral");
-      }
+      setIsSpeaking(false);
     }
-  }, [isSpeaking, audioAnalyzer, robotState]);
+  }, [audioAnalyzer, robotState]);
 
   const connect = useCallback(async (url?: string, token?: string) => {
     try {

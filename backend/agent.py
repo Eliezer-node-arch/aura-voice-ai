@@ -36,7 +36,7 @@ async def entrypoint(ctx: agents.JobContext):
     session = AgentSession(
         llm=google.beta.realtime.RealtimeModel(
             voice="Charon",
-            temperature=0.5,
+            temperature=0.6,
         ),
     )
 
@@ -97,6 +97,10 @@ async def entrypoint(ctx: agents.JobContext):
         room_input_options=RoomInputOptions(
             # Enable text input for chat messages
             text_enabled=True,
+            # Enable video for the agent
+            video_enabled=True,
+            # Enable audio for the agent
+            audio_enabled=True,
             # LiveKit Cloud enhanced noise cancellation
             # - If self-hosting, omit this parameter
             # - For telephony applications, use `BVCTelephony` for best results
